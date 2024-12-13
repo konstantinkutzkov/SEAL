@@ -9,4 +9,4 @@ models/*
 !models/.gitkeep 
 embeddings/*
 !embeddings/.gitkeep 
-src/__pychache__
+src/__pychache__/*
