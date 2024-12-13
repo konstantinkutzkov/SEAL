@@ -1,0 +1,6 @@
+*.log
+*.pyc
+*.png
+*.jpeg
+*.jpg
+data/embeddings
