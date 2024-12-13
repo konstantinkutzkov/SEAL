@@ -3,4 +3,5 @@
 *.png
 *.jpeg
 *.jpg
-data/embeddings
+data/*
+models/*
