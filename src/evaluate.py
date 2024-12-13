@@ -39,9 +39,10 @@ def get_feature_matrix_fast(pair, ent_map1, ent_map2, entity_embs1, ents2, embs2
 if __name__ == '__main__':
 
     prefixes = ['dummy', 'fr', 'en']
-    datapath_embeddings = 'data/embeddings/'
-    entity_embs1 = load_embeddings(datapath_embeddings, f'{prefixes[1]}_final_embs_100.txt')
-    entity_embs2 = load_embeddings(datapath_embeddings, f'{prefixes[2]}_final_embs_100.txt')
+    emb_dim = 300
+    datapath_embeddings = 'embeddings/'
+    entity_embs1 = load_embeddings(datapath_embeddings, f'{prefixes[1]}_final_embs_{emb_dim}.txt')
+    entity_embs2 = load_embeddings(datapath_embeddings, f'{prefixes[2]}_final_embs_{emb_dim}.txt')
 
     datapath = f'data/{prefixes[1]}_{prefixes[2]}/'
     ref_pairs = load_labels(datapath, 'ref_pairs')
@@ -49,7 +50,7 @@ if __name__ == '__main__':
     ent_map1 = read_entities_map(datapath, 'ent_ids_1')
     ent_map2 = read_entities_map(datapath, 'ent_ids_2')
 
-    lgb_model = lgb.Booster(model_file=f"models/{prefixes[1]}_{prefixes[2]}_model.txt")
+    lgb_model = lgb.Booster(model_file=f"models/{prefixes[1]}_{prefixes[2]}_model_{emb_dim}.txt")
 
     entities2, embs2_df = entity_pairs_df(ref_pairs, ent_map2, entity_embs2)
     # print(embs2_df.shape)
@@ -60,9 +61,9 @@ if __name__ == '__main__':
     top_k = 10
 
     fnd = 0
-    top = 1000
+    top = 10000
     np.random.seed(42)
-    samples = np.random.choice(range(len(ref_pairs)), top)
+    samples = np.random.choice(range(len(ref_pairs)), min(top, len(ref_pairs)), replace=False)
     for i, sample_idx in enumerate(samples): #query in enumerate(range(top)):
         all_feats, index = get_feature_matrix_fast(ref_pairs[sample_idx], ent_map1, ent_map2, entity_embs1, entities2, embs2_df)
         #print(all_feats.shape)

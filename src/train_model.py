@@ -34,7 +34,8 @@ def lgb_model(X_train, X_val, y_train, y_val):
         "boosting_type": "gbdt",
         "objective": "binary",
         "metric": {"auc", "average_precision"},
-        "num_leaves": 29,
+        "num_leaves": 21,
+        "min_data_in_leaf": 5,
         "learning_rate": 0.05,
         "feature_fraction": 0.9,
         "bagging_fraction": 0.8,
@@ -44,17 +45,18 @@ def lgb_model(X_train, X_val, y_train, y_val):
     }
 
     gbm = lgb.train(
-        params, lgb_train, num_boost_round=3000, valid_sets=lgb_eval, 
-        callbacks=[lgb.early_stopping(stopping_rounds=300), lgb.log_evaluation(period=50, show_stdv=True)]
+        params, lgb_train, num_boost_round=6000, valid_sets=lgb_eval, 
+        callbacks=[lgb.early_stopping(stopping_rounds=500), lgb.log_evaluation(period=100, show_stdv=True)]
     )
     return gbm
 
 if __name__ == '__main__':
 
     prefixes = ['dummy', 'fr', 'en']
-    datapath_embeddings = 'data/embeddings/'
-    entity_embs1 = load_embeddings(datapath_embeddings, f'{prefixes[1]}_final_embs_100.txt')
-    entity_embs2 = load_embeddings(datapath_embeddings, f'{prefixes[2]}_final_embs_100.txt')
+    emb_dim = 300
+    datapath_embeddings = 'embeddings/'
+    entity_embs1 = load_embeddings(datapath_embeddings, f'{prefixes[1]}_final_embs_{emb_dim}.txt')
+    entity_embs2 = load_embeddings(datapath_embeddings, f'{prefixes[2]}_final_embs_{emb_dim}.txt')
 
     datapath = f'data/{prefixes[1]}_{prefixes[2]}/'
     sup_pairs = load_labels(datapath, 'sup_pairs')
@@ -62,10 +64,10 @@ if __name__ == '__main__':
     ent_map1 = read_entities_map(datapath, 'ent_ids_1')
     ent_map2 = read_entities_map(datapath, 'ent_ids_2')
 
-    X, y = pairs_to_X_y(sup_pairs, ent_map1, ent_map2,  entity_embs1, entity_embs2, nr_neg=3)
+    X, y = pairs_to_X_y(sup_pairs, ent_map1, ent_map2,  entity_embs1, entity_embs2, nr_neg=10)
     print('X shape', X.shape)
     X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=73)
 
     gbm = lgb_model(X_train, X_val, y_train, y_val)
 
-    gbm.save_model(f"models/{prefixes[1]}_{prefixes[2]}_model.txt")
+    gbm.save_model(f"models/{prefixes[1]}_{prefixes[2]}_model_{emb_dim}.txt")
