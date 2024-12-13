@@ -7,3 +7,5 @@ data/*
 !data/.gitkeep 
 models/*
 !models/.gitkeep 
+embeddings/*
+!embeddings/.gitkeep 

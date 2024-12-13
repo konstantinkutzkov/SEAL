@@ -151,6 +151,7 @@ if __name__ == '__main__':
     nr_walks = 20
     walk_length = 4
     emb_dim = 100
+    embeddings_path = 'embeddings/'
     start = time.time()
 
     print('Generate graphs')
@@ -183,24 +184,24 @@ if __name__ == '__main__':
     initial_embeddings1 = get_LLM_embeddings(llm_model, corpus1, emb_dim=emb_dim)
     initial_embeddings2 = get_LLM_embeddings(llm_model, corpus2, emb_dim=emb_dim)
 
-    write_to_w2v_format('data/embeddings/', f'{prefixes[1]}_llm_embeddings.txt', initial_embeddings1)
-    write_to_w2v_format('data/embeddings/', f'{prefixes[2]}_llm_embeddings.txt', initial_embeddings2)
+    write_to_w2v_format(embeddings_path, f'{prefixes[1]}_llm_embeddings.txt', initial_embeddings1)
+    write_to_w2v_format(embeddings_path, f'{prefixes[2]}_llm_embeddings.txt', initial_embeddings2)
 
     print('DeepWalk training')
-    datapath_embeddings = 'data/embeddings/'
-    train_word2vec(corpus1, emb_dim, datapath_embeddings, f'{prefixes[1]}_llm_embeddings.txt', f"{prefixes[1]}_deepwalk_embs.txt")
-    train_word2vec(corpus2, emb_dim, datapath_embeddings, f'{prefixes[2]}_llm_embeddings.txt', f"{prefixes[2]}_deepwalk_embs.txt")
+    
+    train_word2vec(corpus1, emb_dim, embeddings_path, f'{prefixes[1]}_llm_embeddings.txt', f"{prefixes[1]}_deepwalk_embs.txt")
+    train_word2vec(corpus2, emb_dim, embeddings_path, f'{prefixes[2]}_llm_embeddings.txt', f"{prefixes[2]}_deepwalk_embs.txt")
 
     print('Aggregate neighbor embeddings')
-    embs1 = load_embeddings(datapath_embeddings, f"{prefixes[1]}_deepwalk_embs.txt")
-    embs2 = load_embeddings(datapath_embeddings, f"{prefixes[2]}_deepwalk_embs.txt")
+    embs1 = load_embeddings(embeddings_path, f"{prefixes[1]}_deepwalk_embs.txt")
+    embs2 = load_embeddings(embeddings_path, f"{prefixes[2]}_deepwalk_embs.txt")
 
     bins = 100
     poly_sketch = PolynomialCountSketch(degree=2, n_components=bins, random_state=1) # use the same random state for different graphs
     entity_embs1 = get_vectors(G1, embs1, ent_attr_map1, attr_indices, poly_sketch, bins=bins)
     entity_embs2 = get_vectors(G2, embs2, ent_attr_map2, attr_indices, poly_sketch, bins=bins)
 
-    write_entity_embs_to_file(entity_embs1, datapath_embeddings, f'{prefixes[1]}_final_embs_{bins}.txt')
-    write_entity_embs_to_file(entity_embs2, datapath_embeddings, f'{prefixes[2]}_final_embs_{bins}.txt')
+    write_entity_embs_to_file(entity_embs1, embeddings_path, f'{prefixes[1]}_final_embs_{bins}.txt')
+    write_entity_embs_to_file(entity_embs2, embeddings_path, f'{prefixes[2]}_final_embs_{bins}.txt')
 
     print('Elapsed time', time.time()-start)
