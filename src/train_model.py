@@ -25,7 +25,7 @@ def pairs_to_X_y(pairs, ent_map1, ent_map2, entity_embs1, entity_embs2, nr_neg=5
     return X, y
 
 
-def lgb_model(X_train, X_val, y_train, y_val):
+def lgb_model(X_train, X_val, y_train, y_val, nr_rounds=1000):
 
     lgb_train = lgb.Dataset(pd.DataFrame(X_train), y_train)
     lgb_eval = lgb.Dataset(pd.DataFrame(X_val), y_val, reference=lgb_train)
@@ -45,7 +45,7 @@ def lgb_model(X_train, X_val, y_train, y_val):
     }
 
     gbm = lgb.train(
-        params, lgb_train, num_boost_round=6000, valid_sets=lgb_eval, 
+        params, lgb_train, num_boost_round=nr_rounds, valid_sets=lgb_eval, 
         callbacks=[lgb.early_stopping(stopping_rounds=500), lgb.log_evaluation(period=100, show_stdv=True)]
     )
     return gbm
