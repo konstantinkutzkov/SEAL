@@ -4,82 +4,52 @@ import numpy as np
 import networkx as nx
 from sklearn.decomposition import PCA
 from gensim.models import Word2Vec
-# from sentence_transformers import SentenceTransformer
+from sentence_transformers import SentenceTransformer
 import tensorflow as tf
 import tensorflow_hub as hub
 import tensorflow_text
+import time
 from utils import *
+from entity_embeddings import *
 from train_model import *
-
-def page0_main():
-    st.markdown("#### Scalable Entity ALignment (SEAL) demo")
-
-def get_llm(model_name="https://www.kaggle.com/models/google/universal-sentence-encoder/TensorFlow2/multilingual/2"): #model_name="paraphrase-multilingual-MiniLM-L12-v2"):
-    # llm_model = SentenceTransformer(model_name)
-    llm = hub.load(model_name)
-    return llm
-
-def get_LLM_embeddings(llm, corpus, emb_dim):
-    model_w2v = Word2Vec(vector_size=1, window=5, min_count=1, workers=1)
-    model_w2v.build_vocab(corpus)
-    vocabulary = sorted(model_w2v.wv.index_to_key)
-    sentences = [split_entity(ent) for ent in vocabulary]
-    print('Sentences computed')
-    embeddings = llm(sentences) #llm_model.encode(sentences)
-    pca = PCA(n_components=emb_dim)
-    reduced_dim_embeddings = pca.fit_transform(embeddings)
-    del embeddings
-    assert len(vocabulary) == reduced_dim_embeddings.shape[0]
-    print('PCA dim reduction finished')
-    emb_dic = {ent: emb for ent, emb in zip(vocabulary, reduced_dim_embeddings)}
-    return emb_dic
-
-def train_word2vec(corpus, emb_dim, emb_path, initial_emb_fname, emb_fname):
-    model_w2v = Word2Vec(vector_size=emb_dim, window=5, min_count=5, workers=4)
-    model_w2v.build_vocab(corpus)
-    model_w2v.wv.vectors_lockf = np.ones(len(model_w2v.wv), dtype=np.float32)
-    model_w2v.wv.intersect_word2vec_format(emb_path + initial_emb_fname) #"data/embeddings/llm_embeddings.txt")
-    model_w2v.wv.vectors_lockf = np.ones(len(model_w2v.wv), dtype=np.float32)
-    model_w2v.train(corpus, total_examples=len(corpus), epochs=5)
-    model_w2v.wv.save_word2vec_format(emb_path + emb_fname)
+import os
 
 
-def random_walk(G, start_node, nr_walks, walk_length, seed=73):
-    walks = []
-    np.random.seed(seed)
-    for _ in range(nr_walks):
-        neighbors = G[start_node]
-        walk = [start_node]
-        for _ in range(walk_length):
-            idx = np.random.randint(len(neighbors))
-            walk.append(neighbors[idx][0])
-            walk.append(neighbors[idx][1])
-            #print(neighbors[idx])
-            neighbors = G[neighbors[idx][1]]
-        walks.append(walk)
-    return walks  
-    
-def get_corpus(G, nr_walks, walk_length):
-    corpus = []
-    for node in G.keys():
-        corpus.extend(random_walk(G, node, nr_walks=nr_walks, walk_length=walk_length))
-    return corpus
 
-def load_graph(datasets):
+def get_llm(llm_type):
+    if llm_type == 'tf':
+        model_name="https://www.kaggle.com/models/google/universal-sentence-encoder/TensorFlow2/multilingual/2" 
+        llm_model = hub.load(model_name)
+    else:
+        model_name="paraphrase-multilingual-MiniLM-L12-v2"
+        llm_model = SentenceTransformer(model_name)
+    return llm_model
+
+
+def load_graph(datasets, printit=False):
+    '''
+        Loading datasets into a KG representation.
+        The function is specific for the provided input data format, alternative functions should be used for other inputs.
+    '''
     ent_map, ent_attr_map, rel_map = {}, {}, {}
     triples = []
     for dataset in datasets:
         print(dataset.name)
         if 'ent_ids' in dataset.name:
-            print('entities')
+            if printit:
+                print('entities')
             ent_map = read_entities_map(st.session_state.datapath, dataset.name)
         if 'att_triples' in dataset.name:
+            if printit:
+                print('Attributes')
             ent_attr_map, ent_attr_set = get_attribute_frequencies(st.session_state.datapath, dataset.name)
         if 'rel_ids' in dataset.name:
-            print('relations')
+            if printit:
+                print('relations')
             rel_map = read_entities_map(st.session_state.datapath, dataset.name)
         if 'triples' in dataset.name:
-            print('triples')
+            if printit:
+                print('triples')
             triples = get_triples(st.session_state.datapath, dataset.name)
 
     if len(triples) > 0 and len(ent_map) > 0 and len(rel_map) > 0:
@@ -87,6 +57,16 @@ def load_graph(datasets):
         return G
     else:
         return {}
+    
+def page_main():
+    st.markdown("#### Scalable Entity ALignment (SEAL) demo")
+    languages = st.radio('Select pair of graphs', ['French-English', 'Japanese-English', 'Chinese-English'])
+    if languages == 'French-English':
+        st.session_state.datapath = '../data/fr_en/'
+        st.session_state.prefixes = ['dummy', 'fr', 'en']
+    else:
+        st.markdown('### :red[Currently not implemented]')
+
 
 def page_generate():
     if 'G1' not in st.session_state or 'G2' not in st.session_state:
@@ -95,21 +75,32 @@ def page_generate():
     emb_dim = st.selectbox('Select dimensionality of node embeddings', [50, 100, 200, 300])
     nr_walks = st.selectbox('Select number of random walks per node', [5, 10, 15, 20])
     walk_length = st.selectbox('Select random walk length', [4, 5, 6, 7, 8, 9, 10])
+    llm_type = st.selectbox('Select LLM for initial entity embeddings', ['TensorFlow Universal-Sentence-Encoder', 'Multilingual-MiniLM-L12'])
+    if 'TensorFlow' in llm_type:
+        llm_type = 'tf'
+    else:
+        llm_type = 'minilm'
+    fname1 = f'{st.session_state.prefixes[1]}_final_embs_{emb_dim}_{nr_walks}_{walk_length}_{llm_type}.txt'
+    fname2 = f'{st.session_state.prefixes[2]}_final_embs_{emb_dim}_{nr_walks}_{walk_length}_{llm_type}.txt'
+    if os.path.exists(st.session_state.embeddings_path + fname1) and os.path.exists(st.session_state.embeddings_path + fname2):
+            st.markdown('###### :red[Embeddings for the given hyperparameters already exist. Do you want to compute them again?]')
     generate_button = st.button('Generate training corpus', disabled=False)
     if generate_button:
+        start = time.time()
         st.text('Generate corpora')
+        # generating a corpus with random walks ent1-rel1-ent2-rel2-ent3-.... 
         corpus1 = get_corpus(st.session_state.G1, nr_walks=nr_walks, walk_length=walk_length)
         corpus2 = get_corpus(st.session_state.G2, nr_walks=nr_walks, walk_length=walk_length)
 
         st.text('Computing LLM embeddings')
-        llm = get_llm()
-        initial_embeddings1 = get_LLM_embeddings(llm, corpus1, emb_dim=emb_dim)
-        initial_embeddings2 = get_LLM_embeddings(llm, corpus2, emb_dim=emb_dim)
+        llm_model = get_llm(llm_type)
+        initial_embeddings1 = get_LLM_embeddings(llm_model, llm_type, corpus1, emb_dim=emb_dim)
+        initial_embeddings2 = get_LLM_embeddings(llm_model, llm_type, corpus2, emb_dim=emb_dim)
 
         write_to_w2v_format(st.session_state.embeddings_path, f'{st.session_state.prefixes[1]}_llm_embeddings.txt', initial_embeddings1)
         write_to_w2v_format(st.session_state.embeddings_path, f'{st.session_state.prefixes[2]}_llm_embeddings.txt', initial_embeddings2)
 
-        print('DeepWalk training')
+        st.text('DeepWalk training')
         
         train_word2vec(corpus1, emb_dim, st.session_state.embeddings_path, \
                        f'{st.session_state.prefixes[1]}_llm_embeddings.txt', f"{st.session_state.prefixes[1]}_deepwalk_embs.txt")
@@ -124,23 +115,31 @@ def page_generate():
         entity_embs1 = get_vectors(st.session_state.G1, embs1, st.session_state.ent_attr_map1, st.session_state.attr_indices, poly_sketch, bins=emb_dim)
         entity_embs2 = get_vectors(st.session_state.G2, embs2, st.session_state.ent_attr_map2, st.session_state.attr_indices, poly_sketch, bins=emb_dim)
 
-        write_entity_embs_to_file(entity_embs1, st.session_state.embeddings_path, f'{st.session_state.prefixes[1]}_final_embs_{emb_dim}.txt')
-        write_entity_embs_to_file(entity_embs2, st.session_state.embeddings_path, f'{st.session_state.prefixes[2]}_final_embs_{emb_dim}.txt')
-
-        # ent_attr_map1, ent_attr_set1 = get_attribute_frequencies(st.session_state.datapath, f'{st.session_state.prefixes[1]}_att_triples')
-        # ent_attr_map2, ent_attr_set2 = get_attribute_frequencies(st.session_state.datapath, f'{st.session_state.prefixes[2]}_att_triples')
-        # attr_set = ent_attr_set1.intersection(ent_attr_set2)
-
-        # attr_indices = {attr:i for i, attr in enumerate(sorted(list(attr_set)))}
+        write_entity_embs_to_file(entity_embs1, st.session_state.embeddings_path, \
+                                  f'{st.session_state.prefixes[1]}_final_embs_{emb_dim}_{nr_walks}_{walk_length}_{llm_type}.txt')
+        write_entity_embs_to_file(entity_embs2, st.session_state.embeddings_path, \
+                                  f'{st.session_state.prefixes[2]}_final_embs_{emb_dim}_{nr_walks}_{walk_length}_{llm_type}.txt')
+        st.markdown(f'##### Feature generation finished in {np.round(time.time()-start, 2)} seconds.')
 
     
 def page_train():
-
     emb_dim = st.selectbox('Select dimensionality of node embeddings', [50, 100, 200, 300])
+    nr_walks = st.selectbox('Select number of random walks per node', [5, 10, 15, 20])
+    walk_length = st.selectbox('Select random walk length', [4, 5, 6, 7, 8, 9, 10])
+    llm_type = st.selectbox('Select LLM for initial entity embeddings', ['TensorFlow Universal-Sentence-Encoder', 'Multilingual-MiniLM-L12'])
+    if 'TensorFlow' in llm_type:
+        llm_type = 'tf'
+    else:
+        llm_type = 'minilm'
     train_button = st.button('Train model', disabled=False)
     if train_button:
-        entity_embs1 = load_embeddings(st.session_state.embeddings_path, f'{st.session_state.prefixes[1]}_final_embs_{emb_dim}.txt')
-        entity_embs2 = load_embeddings(st.session_state.embeddings_path, f'{st.session_state.prefixes[2]}_final_embs_{emb_dim}.txt')
+        fname1 = f'{st.session_state.prefixes[1]}_final_embs_{emb_dim}_{nr_walks}_{walk_length}_{llm_type}.txt'
+        fname2 = f'{st.session_state.prefixes[2]}_final_embs_{emb_dim}_{nr_walks}_{walk_length}_{llm_type}.txt'
+        if not os.path.exists(st.session_state.embeddings_path + fname1) or not os.path.exists(st.session_state.embeddings_path + fname2):
+            st.markdown('### No embeddings for the given hyperparameters.')
+            return 
+        entity_embs1 = load_embeddings(st.session_state.embeddings_path, fname1)
+        entity_embs2 = load_embeddings(st.session_state.embeddings_path, fname2)
 
         datapath = f'../data/{st.session_state.prefixes[1]}_{st.session_state.prefixes[2]}/'
         sup_pairs = load_labels(datapath, 'sup_pairs')
@@ -152,17 +151,57 @@ def page_train():
         print('X shape', X.shape)
         X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=73)
 
-        gbm = lgb_model(X_train, X_val, y_train, y_val, nr_rounds=1000)
+        gbm = lgb_model(X_train, X_val, y_train, y_val, nr_rounds=3000)
+        gbm.save_model(f"../models/{st.session_state.prefixes[1]}_{st.session_state.prefixes[2]}_model_{emb_dim}_{nr_walks}_{walk_length}_{llm_type}.txt")
+        st.text('Training done')
 
-        gbm.save_model(f"../models/{st.session_state.prefixes[1]}_{st.session_state.prefixes[2]}_model_{emb_dim}.txt")
 
-
+def page_query():
+    emb_dim = st.selectbox('Select dimensionality of node embeddings', [50, 100, 200, 300])
+    nr_walks = st.selectbox('Select number of random walks per node', [5, 10, 15, 20])
+    walk_length = st.selectbox('Select random walk length', [4, 5, 6, 7, 8, 9, 10])
+    llm_type = st.selectbox('Select LLM for initial entity embeddings', ['TensorFlow Universal-Sentence-Encoder', 'Multilingual-MiniLM-L12'])
+    if 'TensorFlow' in llm_type:
+        llm_type = 'tf'
+    else:
+        llm_type = 'minilm'
+    fname1 = f'{st.session_state.prefixes[1]}_final_embs_{emb_dim}_{nr_walks}_{walk_length}_{llm_type}.txt'
+    fname2 = f'{st.session_state.prefixes[2]}_final_embs_{emb_dim}_{nr_walks}_{walk_length}_{llm_type}.txt' 
+    if not os.path.exists(st.session_state.embeddings_path + fname1) or not os.path.exists(st.session_state.embeddings_path + fname2):
+        st.markdown('#### No pretrained embeddings for the given hyperparameters.')
+        return 
+    entity_embs1 = load_embeddings(st.session_state.embeddings_path, fname1)
+    entity_embs2 = load_embeddings(st.session_state.embeddings_path, fname2)
+    model_file = f"../models/{st.session_state.prefixes[1]}_{st.session_state.prefixes[2]}_model_{emb_dim}_{nr_walks}_{walk_length}_{llm_type}.txt"
+    if not os.path.exists(model_file):
+        st.markdown('#### No pretrained model for the given hyperparameters.')
+        return 
+    lgb_model = lgb.Booster(model_file=model_file)
+    ref_pairs = load_labels(st.session_state.datapath, 'ref_pairs')
+    queries = {}
+    for pair in ref_pairs[:1000]:
+        name = st.session_state.ent_map1[pair[0]].split('/')[-1]
+        queries[name] = st.session_state.ent_map2[pair[1]].split('/')[-1]
+    inp = st.selectbox('Select query', list(queries.keys()))
+    q = queries[inp]
+    feats, entities = [], []
+    for ent, emb in entity_embs2.items():
+        feats.append(list(entity_embs1[inp]) + list(emb))
+        entities.append(ent)
+    df = pd.DataFrame(feats)
+    preds = lgb_model.predict(df)
+    for i, index in enumerate(preds.argsort()[-20:][::-1]):
+        if entities[index] == q:
+            st.write(f"{i+1}: :green[{entities[index]}]")
+        else:
+            st.write(str(i+1) + ': ' + entities[index])
+    
 
 page_names_to_funcs = {
-    "Main Page": page0_main,
+    "Main Page": page_main,
     "Feature generation": page_generate,
     "Train model": page_train,
-    "Query model": None
+    "Query model": page_query
 } 
 
 def clicked(idx):
@@ -201,11 +240,6 @@ def main():
         st.markdown('## SEAL: Scalable Entity ALignment')
         selected_page = st.sidebar.selectbox("Select a page", page_names_to_funcs.keys())
     page_names_to_funcs[selected_page]() 
-
-    languages = st.radio('Select pair of graphs', ['French-English', 'Japanese-English', 'Chinese-English'])
-    if languages == 'French-English':
-        st.session_state.datapath = '../data/fr_en/'
-        st.session_state.prefixes = ['dummy', 'fr', 'en']
 
 
     st.session_state.ent_map1 = read_entities_map(st.session_state.datapath, 'ent_ids_1')

@@ -3,7 +3,7 @@ import re
 import time
 from sklearn.decomposition import PCA
 from gensim.models import Word2Vec
-# from sentence_transformers import SentenceTransformer
+from sentence_transformers import SentenceTransformer
 import tensorflow as tf
 import tensorflow_hub as hub
 import tensorflow_text
@@ -34,24 +34,37 @@ def get_corpus(G, nr_walks, walk_length):
         corpus.extend(random_walk(G, node, nr_walks=nr_walks, walk_length=walk_length))
     return corpus
 
-def split_entity(s, chars_to_remove=['_', '.', ',', '(', ')', '[', ']', '!']):
-    t = re.sub( r"([A-Z]|_)", r" \1", s).split()
-    res = ' '.join(t)
-    sc = set(chars_to_remove)
-    return ''.join([c for c in res if c not in sc])
+# def split_entity(s, chars_to_remove=['_', '.', ',', '(', ')', '[', ']', '!']):
+#     t = re.sub( r"([A-Z]|_)", r" \1", s).split()
+#     res = ' '.join(t)
+#     sc = set(chars_to_remove)
+#     return ''.join([c for c in res if c not in sc])
 
-def get_llm(model_name="https://www.kaggle.com/models/google/universal-sentence-encoder/TensorFlow2/multilingual/2"): #model_name="paraphrase-multilingual-MiniLM-L12-v2"):
-    # llm_model = SentenceTransformer(model_name)
-    llm = hub.load(model_name)
-    return llm
+# def get_llm(model_name="https://www.kaggle.com/models/google/universal-sentence-encoder/TensorFlow2/multilingual/2"): #model_name="paraphrase-multilingual-MiniLM-L12-v2"):
+#     # llm_model = SentenceTransformer(model_name)
+#     llm = hub.load(model_name)
+#     return llm
 
-def get_LLM_embeddings(llm, corpus, emb_dim):
+def encode(llm_model, llm_type, sentences):
+    if llm_type == 'tf':
+        return llm_model(sentences)
+    if llm_type == 'minilm':
+        return llm_model.encode(sentences)
+
+def get_LLM_embeddings(llm_model, llm_type, corpus, emb_dim):
+    '''
+        for each entity (e.g. "Alliance_of_Liberals_and_Democrats_for_Europe_Party"),
+        generate a sentence and compute embeddings using an LLM.
+        Reduce the dimensionality of the embeddings using PCA.
+        TO-DO: We should use the pretrained PCA from one graph on the other for dimensionality reduction
+        TO-DO: We can run out of memory for larger corpora, in such cases LLM embeddings should be computed in batches and PCA computed on a sample
+    '''
     model_w2v = Word2Vec(vector_size=1, window=5, min_count=1, workers=1)
     model_w2v.build_vocab(corpus)
     vocabulary = sorted(model_w2v.wv.index_to_key)
     sentences = [split_entity(ent) for ent in vocabulary]
     print('Sentences computed')
-    embeddings = llm(sentences) #llm_model.encode(sentences)
+    embeddings = encode(llm_model, llm_type, sentences) #llm(sentences) #llm_model.encode(sentences)
     pca = PCA(n_components=emb_dim)
     reduced_dim_embeddings = pca.fit_transform(embeddings)
     del embeddings
@@ -61,6 +74,11 @@ def get_LLM_embeddings(llm, corpus, emb_dim):
     return emb_dic
 
 def train_word2vec(corpus, emb_dim, emb_path, initial_emb_fname, emb_fname):
+    '''
+        Given a corpus with random walk sequences, initialize the entity embeddings with the LLM embeddings, and train word2vec.
+        This is essentially DeepWalk.
+        TO DO: consider other graph embedding approaches such as node2vec
+    '''
     model_w2v = Word2Vec(vector_size=emb_dim, window=5, min_count=5, workers=4)
     model_w2v.build_vocab(corpus)
     model_w2v.wv.vectors_lockf = np.ones(len(model_w2v.wv), dtype=np.float32)
@@ -85,12 +103,16 @@ def get_vectors(G, embs, ent_attrs, attr_indices, kernel_map, bins, nr_chars=3, 
     """
         G: knowledge graph as a hash map {head: [(rel, tail), ...]}
         embs: precomputed entity and relations embeddings
+        ent_attrs: hash map with the attributes for each entity, if existent
         kernel_map: explicit feature map for non-linear kernels, see https://scikit-learn.org/1.5/modules/kernel_approximation.html#kernel-approximation
         bins: the dimensionality of the skip-gram frequency vectors
         nr_chars, distance: skipgram parameters
     """
     X =  np.array(list(embs.values()))
     print(X.shape)
+
+    # I didn't observe any advantages of using an explcit non-linear feature map and it is currently not used
+    # But maybe for other graphs we will observe some advantages
     #sketch = kernel_map.fit_transform(X)
     #print('sketch shape', sketch.shape)
     #assert len(embs) == sketch.shape[0]
@@ -105,11 +127,11 @@ def get_vectors(G, embs, ent_attrs, attr_indices, kernel_map, bins, nr_chars=3, 
         if cnt % 5000 == 0:
             print(cnt)
         emb_head = kernel_embs[node]
-        skipgram_head = string2vec(node, bins, nr_chars, distance)
+        skipgram_head = string2vec(node, bins, nr_chars, distance) # generate skipgrams for each entity
         #nbr_rels, nbr_tails = [], []
         nbrs = []
-        skipgram_rels, skipgram_tails = [], []
-        degrees = []
+        skipgram_rels, skipgram_tails = [], [] # the skip-gram distribution for the neighbors of each entity
+        degrees = [] # the degree distribution of the neighbors
         node_attr_vec = [-1 for _ in range(len(attr_indices)+1)]
         if node in ent_attrs:
             node_attrs = ent_attrs[node]
@@ -117,8 +139,6 @@ def get_vectors(G, embs, ent_attrs, attr_indices, kernel_map, bins, nr_chars=3, 
             cnt_attrs += 1
         for nbr in neighbors:
             if nbr[0] not in embs or nbr[1] not in embs:
-                # print('not found', nf, nbr)
-                nf += 1
                 continue
             emb_rel, emb_tail = np.array(kernel_embs[nbr[0]]), np.array(kernel_embs[nbr[1]])
             emb_rel = emb_rel/np.linalg.norm(emb_rel)
@@ -128,6 +148,11 @@ def get_vectors(G, embs, ent_attrs, attr_indices, kernel_map, bins, nr_chars=3, 
             degrees.append(len(G[nbr[1]]))
             skipgram_rels.append(string2vec(nbr[0], bins, nr_chars, distance))
             skipgram_tails.append(string2vec(nbr[1], bins, nr_chars, distance))
+        if len(nbrs) == 0:  # some entities might have no neighbors or not appear in any random walk, 
+                            # this should be handled more carefully but for now they are simply ignored
+            nf += 1
+            print('nf', nf) 
+            continue
         #emb_rel_agg = np.mean(nbr_rels, axis=0)
         #emb_tails_agg = np.mean(nbr_tails, axis=0)
         emb_nbrs = np.sum(nbrs, axis=0)
